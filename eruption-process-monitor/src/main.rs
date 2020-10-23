@@ -15,7 +15,10 @@
     along with Eruption.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-use crate::dbus_client::Message;
+use colored::*;
+use walkdir::WalkDir;
+use dbus_client::Message;
+use manifest::Manifest;
 use clap::Clap;
 use clap::*;
 use crossbeam::channel::{unbounded, Receiver, Select, Sender};
@@ -40,6 +43,12 @@ mod dbus_client;
 mod procmon;
 mod sensors;
 mod util;
+mod transport;
+mod dbus_interface;
+mod manifest;
+mod visualizers;
+
+use transport::{NetworkFXTransport, Transport, TransportError, RGBA};
 
 lazy_static! {
     /// Global configuration
@@ -225,6 +234,9 @@ pub enum Subcommands {
     /// Run in background and monitor running processes
     Daemon,
 
+    /// Ping Network FX server
+    Ping,
+
     /// Rules related subcommands
     Rules {
         #[clap(subcommand)]
@@ -280,6 +292,60 @@ fn print_header() {
  along with Eruption.  If not, see <http://www.gnu.org/licenses/>.
 "#
     );
+}
+
+fn load_manifests() -> Result<()> {
+    let directory_name = PathBuf::from(
+        CONFIG
+            .lock()
+            .as_ref()
+            .unwrap()
+            .get_str("global.manifest_dir")
+            .unwrap_or_else(|_| constants::DEFAULT_MANIFEST_DIR.to_string()),
+    );
+
+    for filename in WalkDir::new(&directory_name)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if !filename.path().is_file() {
+            continue;
+        }
+
+        let manifest = Manifest::from_file(&filename.path())?;
+
+        // add auto-generated process exec selector
+        let selector = Selector::ProcessExec {
+            comm: manifest.process_name,
+        };
+
+        let mut metadata = RuleMetadata::default();
+        metadata.internal = true;
+
+        let action = Action::SwitchToProfile {
+            profile_name: "netfx.profile".into(),
+        };
+
+        RULES_MAP.write().insert(selector, (metadata, action));
+
+        // add auto-generated window instance selector
+        let selector = Selector::WindowFocused {
+            mode: WindowFocusedSelectorMode::WindowInstance,
+            regex: manifest.window_instance,
+        };
+
+        let mut metadata = RuleMetadata::default();
+        metadata.internal = true;
+
+        let action = Action::SwitchToProfile {
+            profile_name: "netfx.profile".into(),
+        };
+
+        RULES_MAP.write().insert(selector, (metadata, action));
+    }
+
+    Ok(())
 }
 
 /// Execute an action
@@ -402,6 +468,7 @@ async fn process_fs_event(event: &FileSystemEvent) -> Result<()> {
 
             RULES_MAP.write().clear();
 
+            load_manifests().unwrap_or_else(|e| error!("Could not load manifests: {}", e));
             load_rules_map().unwrap_or_else(|e| error!("Could not load rules: {}", e));
 
             for (selector, (metadata, action)) in RULES_MAP.read().iter() {
@@ -672,6 +739,7 @@ pub async fn run_main_loop(
     fsevents_rx: &Receiver<FileSystemEvent>,
     dbusevents_rx: &Receiver<dbus_client::Message>,
     ctrl_c_rx: &Receiver<bool>,
+    transport: &mut dyn Transport,
 ) -> Result<()> {
     trace!("Entering main loop...");
 
@@ -681,6 +749,13 @@ pub async fn run_main_loop(
     let fsevents = sel.recv(fsevents_rx);
     let dbusevents = sel.recv(dbusevents_rx);
     let sysevents = sel.recv(sysevents_rx);
+
+    let led_map: &[RGBA; 144] = &[RGBA {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 0,
+    }; 144];
 
     'MAIN_LOOP: loop {
         if QUIT.load(Ordering::SeqCst) {
@@ -747,6 +822,53 @@ pub async fn run_main_loop(
                     }
 
                     Err(e) => warn!("Could not poll a sensor: {}", e),
+                }
+            }
+        }
+
+        // generate LED map
+
+        // reconnect the transport backend if necessary
+        if !transport.is_connected() {
+            transport.reconnect().await.unwrap_or_else(|e| {
+                debug!(
+                    "Could not reconnect to transport, retrying again later: {}",
+                    e
+                )
+            });
+        }
+
+        // send the LED map via the current transport backend
+        match transport.send_led_map(led_map).await {
+            Ok(()) => trace!("successfully sent LED map to server"),
+
+            Err(e) => {
+                if let Some(e) = e.downcast_ref::<TransportError>() {
+                    match e {
+                        TransportError::NotConnectedError { .. } => {
+                            transport.reconnect().await.unwrap_or_else(|e| {
+                                debug!(
+                                    "Could not reconnect to transport, retrying again later: {}",
+                                    e
+                                )
+                            });
+                        }
+
+                        _ => {
+                            // other TransportError error occurred
+                            error!("Could not send LED map: {}", e);
+                        }
+                    }
+                } else {
+                    // other error occurred
+                    debug!("Could not send LED map: {}", e);
+
+                    transport.reconnect().await.unwrap_or_else(|e| {
+                        debug!(
+                            "Could not reconnect to transport, retrying again later: {}",
+                            e
+                        )
+                    });
                 }
             }
         }
@@ -891,6 +1013,7 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
     info!("Registering plugins...");
 
     sensors::register_sensors()?;
+    visualizers::register_visualizers()?;
 
     info!("Loading rules...");
     load_rules_map().unwrap_or_else(|e| error!("Could not load rules: {}", e));
@@ -926,14 +1049,56 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
 
             info!("Startup completed");
 
+            info!("Connecting transport backend...");
+            let address = format!(
+                "{}:{}",
+                opts.hostname
+                    .unwrap_or_else(|| constants::DEFAULT_HOST.to_owned()),
+                opts.port.unwrap_or(constants::DEFAULT_PORT)
+            );
+
+            let mut transport = NetworkFXTransport::new();
+            transport.connect(&address).await.unwrap_or_else(|e| {
+                warn!(
+                    "Could not connect to transport, retrying again later: {}",
+                    e
+                )
+            });
+
             debug!("Entering the main loop now...");
 
             // enter the main loop
-            run_main_loop(&sysevents_rx, &fsevents_rx, &dbusevents_rx, &ctrl_c_rx)
+            run_main_loop(&sysevents_rx, &fsevents_rx, &dbusevents_rx, &ctrl_c_rx, &mut transport)
                 .await
                 .unwrap_or_else(|e| error!("{}", e));
 
             debug!("Left the main loop");
+        }
+
+        Subcommands::Ping => {
+            let address = format!(
+                "{}:{}",
+                opts.hostname
+                    .unwrap_or_else(|| constants::DEFAULT_HOST.to_owned()),
+                opts.port.unwrap_or(constants::DEFAULT_PORT)
+            );
+
+            let mut transport = NetworkFXTransport::new();
+
+            transport.connect(&address).await.unwrap_or_else(|e| {
+                eprintln!(
+                    "Could not connect to transport: {}\nIs the Network FX server running?",
+                    e
+                )
+            });
+
+            match transport.ping().await {
+                Ok(result) => println!("{}", result.1.bold()),
+
+                Err(e) => {
+                    eprintln!("Could not send a ping: {}", e);
+                }
+            }
         }
 
         Subcommands::Rules { command } => match command {
