@@ -22,16 +22,14 @@ ticks = 0
 
 -- event handler functions --
 function on_startup(config)
-    local num_keys = get_num_keys()
-
     for i = 0, num_keys do
         color_map[i] = 0x00000000
     end
 
     -- static gradient
     if not animate_gradient then
-        for i = 0, num_keys do
-            color_map[i] = linear_gradient(color_start, color_end, ((i + ticks) / color_divisor) * gradient_speed)
+        for i = 0, canvas_size do
+            color_map[i] = linear_gradient(color_start, color_end, i / num_keys)
         end
 
         submit_color_map(color_map)
@@ -45,10 +43,9 @@ function on_tick(delta)
 
     -- animate gradient
     if ticks % gradient_step == 0 then
-        local num_keys = get_num_keys()
-
-        for i = 0, num_keys do
-            color_map[i] = linear_gradient(color_start, color_end, ((i + ticks) / color_divisor) * gradient_speed)
+        for i = 0, canvas_size do
+            local p = ((i + ticks) / color_divisor) % 100
+            color_map[i] = linear_gradient(color_start, color_end, p / 100)
         end
 
         submit_color_map(color_map)

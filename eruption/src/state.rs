@@ -47,6 +47,7 @@ lazy_static! {
 #[serde(rename_all = "lowercase")]
 struct State {
     active_slot: usize,
+    slot_names: Vec<String>,
     profiles: Vec<PathBuf>,
     enable_sfx: bool,
     brightness: i64,
@@ -57,9 +58,9 @@ pub fn init_global_runtime_state() -> Result<()> {
     let mut profiles = crate::SLOT_PROFILES.lock();
     profiles.replace(vec![
         PathBuf::from("profile1.profile"),
-        PathBuf::from("profile2.profile"),
-        PathBuf::from("profile3.profile"),
-        PathBuf::from("profile4.profile"),
+        PathBuf::from("red-wave.profile"),
+        PathBuf::from("swirl-perlin.profile"),
+        PathBuf::from("spectrum-analyzer-swirl.profile"),
     ]);
 
     // load state file
@@ -86,7 +87,7 @@ pub fn init_global_runtime_state() -> Result<()> {
         .write()
         .as_mut()
         .unwrap()
-        .set_default("brightness", 100)
+        .set_default("brightness", 85)
         .unwrap();
 
     STATE
@@ -141,6 +142,21 @@ pub fn init_global_runtime_state() -> Result<()> {
         Ordering::SeqCst,
     );
 
+    let mut slot_names = crate::SLOT_NAMES.lock();
+    *slot_names = STATE
+        .read()
+        .as_ref()
+        .unwrap()
+        .get::<Vec<String>>("slot_names")
+        .unwrap_or_else(|_| {
+            vec![
+                "Profile Slot 1".to_string(),
+                "Profile Slot 2".to_string(),
+                "Profile Slot 3".to_string(),
+                "Profile Slot 4".to_string(),
+            ]
+        });
+
     perform_sanity_checks();
 
     Ok(())
@@ -151,6 +167,7 @@ pub fn save_runtime_state() -> Result<()> {
 
     let config = State {
         active_slot: crate::ACTIVE_SLOT.load(Ordering::SeqCst),
+        slot_names: crate::SLOT_NAMES.lock().clone(),
         profiles: crate::SLOT_PROFILES.lock().as_ref().unwrap().clone(),
         enable_sfx: audio::ENABLE_SFX.load(Ordering::SeqCst),
         brightness: crate::BRIGHTNESS.load(Ordering::SeqCst) as i64,

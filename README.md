@@ -1,58 +1,51 @@
-![Clippy check](https://github.com/X3n0m0rph59/eruption-roccat-vulcan/workflows/Clippy%20check/badge.svg)
+![Clippy check](https://github.com/X3n0m0rph59/eruption/workflows/Clippy%20check/badge.svg)
 
 # Table of Contents
 
-- <a href="#eruption">Eruption</a>
-- <a href="#devices">Supported Devices</a>
-- <a href="#issues">Known Issues</a>
-- <a href="#important">Important Information</a>
-- <a href="#overview">Design Overview</a>
-- <a href="#installation">Installation</a>
-- <a href="#after_setup">After Setup</a>
-- <a href="#audio">Support for Audio Playback and Capture </a>
-- <a href="#info">Further Reading</a>
-- <a href="#contributing">Contributing</a>
+- [Table of Contents](#table-of-contents)
+  - [Eruption](#eruption)
+  - [Supported Devices](#supported-devices)
+    - [Keyboard devices](#keyboard-devices)
+    - [Mouse devices](#mouse-devices)
+  - [Important Information](#important-information)
+  - [Design Overview](#design-overview)
+  - [Installation](#installation)
+    - [Arch Linux and derivatives like ArcoLinux or Manjaro](#arch-linux-and-derivatives-like-arcolinux-or-manjaro)
+    - [Fedora based](#fedora-based)
+    - [Ubuntu or Pop!_OS](#ubuntu-or-pop_os)
+    - [From Source](#from-source)
+  - [After Setup](#after-setup)
+    - [Support for Audio Playback and Capture](#support-for-audio-playback-and-capture)
+  - [The `eruption-process-monitor` Daemon](#the-eruption-process-monitor-daemon)
+    - [Examples](#examples)
+    - [Removing a rule](#removing-a-rule)
+  - [Further Reading](#further-reading)
+  - [Contributing](#contributing)
 
-## Eruption <a name="eruption"></a>
+## Eruption
 
-A Linux user-mode driver for the ROCCAT Vulcan 100/12x series keyboards.
-Support for other hardware devices is planned and will be included in future releases.
-Please see [TODO.md](./TODO.md) and [CHANGES.md](./CHANGES.md) for further information.
+A Linux user-mode input and LED driver for keyboards, mice and other devices
 
 [![Eruption Video](https://img.youtube.com/vi/ig_71zg14nQ/0.jpg)](https://www.youtube.com/watch?v=ig_71zg14nQ)
 
-### __TL;DR__ what you absolutely need to know
-
-- The default `MODIFIER` key is the **`FN`** key. Use it to switch slots (with `F1-F4`) or access macros (`M1-M6`).
-- Use the `FN` key too to access special keys/media functions (`F5`-`F12`)
-- Easy Shift+ may be activated by pressing `FN`+`Scroll Lock/GameMode`.
-- You may want to set a different profile for each slot (`F1`-`F4`).
-- Maybe you want to use the GNOME Shell extension [Eruption Profile Switcher](https://extensions.gnome.org/extension/2621/eruption-profile-switcher/)
-or visit the [Github page](https://github.com/X3n0m0rph59/eruption-profile-switcher)
-
-## Supported Devices <a name="devices"></a>
+## Supported Devices
 
 ### Keyboard devices
 
-* ROCCAT Vulcan 100/12x series keyboard
+- ROCCAT Vulcan 100/12x series keyboard (fully supported)
+- ROCCAT Vulcan Pro TKL series keyboard (98% supported as of version `0.1.19`, experimental)
+- ROCCAT Vulcan TKL series keyboard (reported as working, as of version `0.1.19`, experimental)
+- ROCCAT Vulcan Pro series keyboard (work-in-progress, as of version `0.1.20`, experimental, untested)
 
 ### Mouse devices
 
-* ROCCAT Kone Pure Ultra
-* ROCCAT Kova Aimo (highly experimental)
+- ROCCAT Kone Pure Ultra
+- ROCCAT Kone Aimo (experimental)
+- ROCCAT Kova AIMO (experimental)
 
-## Known Issues <a name="issues"></a>
+Please see [DEVICES.md](DEVICES.md) for further information
 
-- Media keys sometimes not working, e.g.: `FN + F11` does not start music playback on my desktop
-
-  *It seems that the problem with disfunctional media keys got resolved by a recent firmware update*
-
-- Mute button will stay lit even if audio is muted
-
-- Keyboard may get into an inconsistent state when Eruption terminates while `Game Mode` is enabled. The state may be fixed manually or by a reboot/device hotplug
-
-
-## Important Information <a name="important"></a>
+## Important Information
 
 This project is still in an early stage of development, and thus may contain
 some, possibly serious bugs.
@@ -61,18 +54,22 @@ If you ever need to forcefully disable the Eruption daemon you may do so by addi
 the following text snippet to the bootloader's (e.g. GRUB) kernel command line:
 
 ```sh
-  systemd.mask=eruption.service
-```
-Or with systemctl to mask the service:
-```sh
-$ sudo systemctl mask eruption.service
-```
-You can always re-enable the Eruption service with the command:
-```sh
-$ sudo systemctl unmask eruption.service
+ systemd.mask=eruption.service
 ```
 
-## Design Overview <a name="overview"></a>
+Or with systemctl to mask the service:
+
+```sh
+ $ sudo systemctl mask eruption.service
+```
+
+You can always re-enable the Eruption service with the command:
+
+```sh
+ $ sudo systemctl unmask eruption.service
+```
+
+## Design Overview
 
 Eruption is a Linux daemon written in Rust, consisting of a core, an integrated
 Lua interpreter and additional plugin components. Its intended usage is to
@@ -84,55 +81,54 @@ map" will be combined with all other scripts "submitted color maps" using a
 compositor that does an alpha blending step on each color map,
 prior to sending the resulting final color map to the keyboard.
 
-## Installation <a name="installation"></a>
+## Installation
 
-#### Arch Linux and derivatives like ArcoLinux or Manjaro
+### Arch Linux and derivatives like ArcoLinux or Manjaro
 
 ```sh
-$ yay -Sy aur/eruption-roccat-vulcan-git
+ $ paru -Syu aur/eruption-git
 ```
 
-#### Fedora based
+### Fedora based
 
 ```sh
-$ sudo dnf copr enable x3n0m0rph59/eruption-roccat-vulcan
-$ sudo dnf install eruption-roccat-vulcan-git
+ $ sudo dnf copr enable x3n0m0rph59/eruption
+ $ sudo dnf install eruption-git
 ```
 
-#### Ubuntu
+### Ubuntu or Pop!_OS
 
 ```sh
-sudo add-apt-repository ppa:x3n0m0rph59/eruption-roccat-vulcan
-sudo apt update
-sudo apt install eruption-roccat-vulcan-git
+ $ sudo add-apt-repository ppa:x3n0m0rph59/eruption
+ $ sudo apt update
+ $ sudo apt install eruption-git
 ```
 
 To activate Eruption now, you may either reboot your system or manually start
 the daemon with the command:
 
 ```sh
-$ sudo systemctl start eruption.service
+ $ sudo systemctl start eruption.service
 ```
 
 > Note: You don't have to enable the eruption service, since it is started by an
 `udev` rule as soon as a compatible keyboard device is plugged into your system.
 
-#### From Source
+### From Source
 
 ```sh
-$ git clone https://github.com/X3n0m0rph59/eruption-roccat-vulcan.git
-$ cd eruption-roccat-vulcan
-$ cargo build --all --release
+ $ git clone https://github.com/X3n0m0rph59/eruption.git
+ $ cd eruption
+ $ cargo build --all --release
 ```
 
-## After Setup <a name="after_setup"></a>
+## After Setup
 
 > You may want to try the
 [Eruption Profile Switcher](https://extensions.gnome.org/extension/2621/eruption-profile-switcher/)
 GNOME Shell extension, for easy switching of profiles on the fly.
 
-
-### Support for Audio Playback and Capture <a name="audio"></a>
+### Support for Audio Playback and Capture
 
 If you want Eruption to be able to play back sound effects, or use one of the
 audio visualizer Lua scripts, then you have to perform a few additional steps.
@@ -143,14 +139,14 @@ Create the PulseAudio config directory and edit the server configuration file
 for your user account:
 
 ```sh
-$ mkdir -p ~/.config/pulse/
-$ cp /etc/pulse/default.pa ~/.config/pulse/default.pa
-$ nano ~/.config/pulse/default.pa
+ $ mkdir -p ~/.config/pulse/
+ $ cp /etc/pulse/default.pa ~/.config/pulse/default.pa
+ $ nano ~/.config/pulse/default.pa
 ```
 
 then add the following line at the end of the file:
 
-```
+```conf
 load-module module-native-protocol-unix auth-group=root socket=/tmp/pulse-server
 ```
 
@@ -159,8 +155,8 @@ file in `/root/.config/pulse/client.conf` for the user that Eruption runs as
 (default: root)
 
 ```sh
-$ sudo mkdir -p /root/.config/pulse/
-$ EDITOR=nano sudoedit /root/.config/pulse/client.conf
+ $ sudo mkdir -p /root/.config/pulse/
+ $ EDITOR=nano sudoedit /root/.config/pulse/client.conf
 ```
 
 and then add the following lines:
@@ -174,11 +170,57 @@ enable-memfd = yes
 Finally, restart PulseAudio and Eruption for the changes to take effect:
 
 ```sh
-$ systemctl --user restart pulseaudio.service
-$ sudo systemctl restart eruption.service
+ $ systemctl --user restart pulseaudio.service
+ $ sudo systemctl restart eruption.service
 ```
 
-## Further Reading <a name="info"></a>
+## The `eruption-process-monitor` Daemon
+
+As of Eruption `0.1.19`, automatic switching of profiles and slots is now supported via the `eruption-process-monitor` daemon. It gathers data via multiple sensor plugins and matches this data against a rule engine. It currently supports executing actions on process execution, as well as on X11 "window focus changed" events.
+
+### Examples
+
+To enable the daemon please run the command:
+
+`systemctl --user enable --now eruption-process-monitor.service`
+
+To list all rules, run the command:
+
+`eruption-process-monitor rules list`
+
+Switch to `spectrum-analyzer-swirl.profile` when a YouTube tab is active in Google Chrome:
+
+`eruption-process-monitor rules add window-name '.*YouTube.*Google Chrome' spectrum-analyzer-swirl.profile`
+
+Switch to `profile3.profile` when a YouTube tab is active in Mozilla Firefox:
+
+`eruption-process-monitor rules add window-name '.*YouTube.*Mozilla Firefox' profile3.profile`
+
+
+To list all supported sensors and actions please run the command:
+
+`eruption-process-monitor rules add help`
+
+### Removing a rule
+
+```bash
+$ eruption-process-monitor rules list
+  0: On window focused: Name: '.*YouTube.*Mozilla Firefox' => Switch to profile: spectrum-analyzer-swirl.profile (enabled: false, internal: false)
+  1: On window focused: Name: 'Skype' => Switch to profile: vu-meter.profile (enabled: false, internal: false)
+  2: On window focused: Name: 'Left 4 Dead 2.*' => Switch to profile: gaming.profile (enabled: true, internal: false)
+  3: On window focused: Name: '.*YouTube.*Google Chrome' => Switch to profile: spectrum-analyzer-swirl.profile (enabled: true, internal: false)
+  4: On window focused: Instance: '.*' => Switch to profile: profile1.profile (enabled: true, internal: true)
+```
+
+To remove a rule, please run the following command:
+
+```
+ $ eruption-process-monitor rules remove 1
+```
+
+This will remove the rule for the window named `Skype` from the ruleset.
+
+## Further Reading
 
 Please see [DOCUMENTATION.md](./DOCUMENTATION.md) for a more thorough explanation of what Eruption is, and how to use and customize it properly.
 
@@ -186,7 +228,7 @@ For further information about the supported Lua functions and libraries, please 
 
 For a detailed documentation on how to write your own macros, please refer to [MACROS.md](./MACROS.md)
 
-## Contributing <a name="contributing"></a>
+## Contributing
 
 Contributions are welcome!
 Please see `src/scripts/examples/*.lua` directory for Lua scripting examples.

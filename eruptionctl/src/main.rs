@@ -53,10 +53,10 @@ pub struct Options {
     command: Subcommands,
 }
 
-// Subcommands
-#[derive(Debug, Clap)]
+// Sub-commands
+#[derive(Debug, Clap /*, IntoApp*/)]
 pub enum Subcommands {
-    /// Configuration related subcommands
+    /// Configuration related sub-commands
     Config {
         #[clap(subcommand)]
         command: ConfigSubcommands,
@@ -68,10 +68,16 @@ pub enum Subcommands {
         command: SwitchSubcommands,
     },
 
-    /// Profile related subcommands
+    /// Profile related sub-commands
     Profiles {
         #[clap(subcommand)]
         command: ProfilesSubcommands,
+    },
+
+    /// Naming related commands such as renaming of profile slots
+    Names {
+        #[clap(subcommand)]
+        command: NamesSubcommands,
     },
 
     /// Script related subcommands
@@ -79,9 +85,15 @@ pub enum Subcommands {
         #[clap(subcommand)]
         command: ScriptsSubcommands,
     },
+
+    /// Generate shell completions
+    Completions {
+        #[clap(subcommand)]
+        command: CompletionsSubcommands,
+    },
 }
 
-/// Subcommands of the "config" command
+/// Sub-commands of the "config" command
 #[derive(Debug, Clap)]
 pub enum ConfigSubcommands {
     /// Get or set the brightness of the LEDs
@@ -91,7 +103,7 @@ pub enum ConfigSubcommands {
     Soundfx { enable: Option<bool> },
 }
 
-/// Subcommands of the "switch" command
+/// Sub-commands of the "switch" command
 #[derive(Debug, Clap)]
 pub enum SwitchSubcommands {
     /// Switch profiles
@@ -101,7 +113,7 @@ pub enum SwitchSubcommands {
     Slot { index: usize },
 }
 
-/// Subcommands of the "profiles" command
+/// Sub-commands of the "profiles" command
 #[derive(Debug, Clap)]
 pub enum ProfilesSubcommands {
     /// Show info about a profile
@@ -112,6 +124,19 @@ pub enum ProfilesSubcommands {
 
     /// List available profiles
     List,
+}
+
+/// Subcommands of the "names" command
+#[derive(Debug, Clap)]
+pub enum NamesSubcommands {
+    /// List slot names
+    List,
+
+    /// Set the name of a single profile slot
+    Set { slot_index: usize, name: String },
+
+    /// Set all the profile slot names at once
+    SetAll { names: Vec<String> },
 }
 
 /// Subcommands of the "scripts" command
@@ -125,6 +150,20 @@ pub enum ScriptsSubcommands {
 
     /// List available scripts
     List,
+}
+
+/// Subcommands of the "completions" command
+#[derive(Debug, Clap)]
+pub enum CompletionsSubcommands {
+    Bash,
+
+    Elvish,
+
+    Fish,
+
+    PowerShell,
+
+    Zsh,
 }
 
 /// Print license information
@@ -159,7 +198,12 @@ pub async fn dbus_system_bus(
         panic!("Lost connection to D-Bus: {}", err);
     });
 
-    let proxy = nonblock::Proxy::new("org.eruption", path, Duration::from_secs(4), conn);
+    let proxy = nonblock::Proxy::new(
+        "org.eruption",
+        path,
+        Duration::from_secs(constants::DBUS_TIMEOUT_MILLIS as u64),
+        conn,
+    );
 
     Ok(proxy)
 }
@@ -182,6 +226,38 @@ pub async fn switch_slot(index: usize) -> Result<()> {
         .await?
         .method_call("org.eruption.Slot", "SwitchSlot", (index as u64,))
         .await?;
+
+    Ok(())
+}
+
+/// Get the names of the profile slots
+pub async fn get_slot_names() -> Result<Vec<String>> {
+    let result: Vec<String> = dbus_system_bus("/org/eruption/slot")
+        .await?
+        .get("org.eruption.Slot", "SlotNames")
+        .await?;
+
+    Ok(result)
+}
+
+/// Set the names of the profile slots
+pub async fn set_slot_names(names: &[String]) -> Result<()> {
+    let arg = Box::new(names);
+
+    let _result = dbus_system_bus("/org/eruption/slot")
+        .await?
+        .set("org.eruption.Slot", "SlotNames", arg)
+        .await?;
+
+    Ok(())
+}
+
+/// Set the name of a single profile slot
+pub async fn set_slot_name(slot_index: usize, name: String) -> Result<()> {
+    let mut result = get_slot_names().await?;
+
+    result[slot_index] = name;
+    set_slot_names(&result).await?;
 
     Ok(())
 }
@@ -349,6 +425,34 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
             }
         },
 
+        // naming related sub-commands
+        Subcommands::Names { command } => match command {
+            NamesSubcommands::List => {
+                let slot_names = get_slot_names().await?;
+
+                for (index, name) in slot_names.iter().enumerate() {
+                    let s = format!("{}", index + 1);
+                    println!("{}: {}", s.bold(), name);
+                }
+            }
+
+            NamesSubcommands::Set { slot_index, name } => {
+                if slot_index > 0 && slot_index <= constants::NUM_SLOTS {
+                    set_slot_name(slot_index - 1, name).await?;
+                } else {
+                    eprintln!("Slot index out of bounds");
+                }
+            }
+
+            NamesSubcommands::SetAll { names } => {
+                if names.len() == constants::NUM_SLOTS {
+                    set_slot_names(&names).await?;
+                } else {
+                    eprintln!("Elements do not match number of slots");
+                }
+            }
+        },
+
         // script related sub-commands
         Subcommands::Scripts { command } => match command {
             ScriptsSubcommands::Edit { script_name } => {
@@ -415,6 +519,38 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
                 switch_slot(index).await?
             }
         },
+
+        Subcommands::Completions { command } => {
+            use clap::IntoApp;
+            use clap_generate::{generate, generators::*};
+
+            const BIN_NAME: &str = env!("CARGO_PKG_NAME");
+
+            let mut app = Options::into_app();
+            let mut fd = std::io::stdout();
+
+            match command {
+                CompletionsSubcommands::Bash => {
+                    generate::<Bash, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::Elvish => {
+                    generate::<Elvish, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::Fish => {
+                    generate::<Fish, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::PowerShell => {
+                    generate::<Fish, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::Zsh => {
+                    generate::<Fish, _>(&mut app, BIN_NAME, &mut fd);
+                }
+            }
+        }
     };
 
     Ok(())

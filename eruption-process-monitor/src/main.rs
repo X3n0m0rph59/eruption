@@ -15,15 +15,13 @@
     along with Eruption.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-use colored::*;
-use walkdir::WalkDir;
-use dbus_client::Message;
-use manifest::Manifest;
 use clap::Clap;
 use clap::*;
+use colored::*;
 use crossbeam::channel::{unbounded, Receiver, Select, Sender};
 use dbus::blocking::stdintf::org_freedesktop_dbus::PropertiesPropertiesChanged;
 use dbus::blocking::Connection;
+use dbus_client::Message;
 use dbus_client::{profile, slot};
 use hotwatch::{
     blocking::{Flow, Hotwatch},
@@ -32,20 +30,22 @@ use hotwatch::{
 use indexmap::IndexMap;
 use lazy_static::lazy_static;
 use log::*;
+use manifest::Manifest;
 use parking_lot::{Mutex, RwLock};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{env, fmt, fs, path::PathBuf, sync::atomic::AtomicBool, sync::Arc};
 use std::{sync::atomic::Ordering, thread, time::Duration};
+use walkdir::WalkDir;
 
 mod constants;
 mod dbus_client;
-mod procmon;
-mod sensors;
-mod util;
-mod transport;
 mod dbus_interface;
 mod manifest;
+mod procmon;
+mod sensors;
+mod transport;
+mod util;
 mod visualizers;
 
 use transport::{NetworkFXTransport, Transport, TransportError, RGBA};
@@ -66,13 +66,13 @@ lazy_static! {
     // Flags
 
     /// Global "enable experimental features" flag
-    pub static ref EXPERIMENTAL_FEATURES: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    pub static ref EXPERIMENTAL_FEATURES: AtomicBool = AtomicBool::new(false);
 
     /// Signals that we initiated a profile change
-    pub static ref PROFILE_CHANGING: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    pub static ref PROFILE_CHANGING: AtomicBool = AtomicBool::new(false);
 
     /// Global "quit" status flag
-    pub static ref QUIT: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    pub static ref QUIT: AtomicBool = AtomicBool::new(false);
 }
 
 type Result<T> = std::result::Result<T, eyre::Error>;
@@ -228,7 +228,7 @@ pub struct Options {
     command: Subcommands,
 }
 
-// Subcommands
+// Sub-commands
 #[derive(Debug, Clap)]
 pub enum Subcommands {
     /// Run in background and monitor running processes
@@ -237,14 +237,20 @@ pub enum Subcommands {
     /// Ping Network FX server
     Ping,
 
-    /// Rules related subcommands
+    /// Rules related sub-commands
     Rules {
         #[clap(subcommand)]
         command: RulesSubcommands,
     },
+
+    /// Generate shell completions
+    Completions {
+        #[clap(subcommand)]
+        command: CompletionsSubcommands,
+    },
 }
 
-/// Subcommands of the "rules" command
+/// Sub-commands of the "rules" command
 #[derive(Debug, Clap)]
 pub enum RulesSubcommands {
     /// List all available rules
@@ -261,6 +267,20 @@ pub enum RulesSubcommands {
 
     /// Remove a rule by index
     Remove { rule_index: usize },
+}
+
+/// Subcommands of the "completions" command
+#[derive(Debug, Clap)]
+pub enum CompletionsSubcommands {
+    Bash,
+
+    Elvish,
+
+    Fish,
+
+    PowerShell,
+
+    Zsh,
 }
 
 #[derive(Debug, Clone)]
@@ -461,7 +481,10 @@ async fn process_system_event(event: &SystemEvent) -> Result<()> {
 }
 
 /// Process filesystem related events
-async fn process_fs_event(event: &FileSystemEvent) -> Result<()> {
+async fn process_fs_event(
+    event: &FileSystemEvent,
+    dbus_api_tx: &Sender<DbusApiEvent>,
+) -> Result<()> {
     match event {
         FileSystemEvent::RulesChanged => {
             info!("Rules changed, reloading...");
@@ -474,6 +497,8 @@ async fn process_fs_event(event: &FileSystemEvent) -> Result<()> {
             for (selector, (metadata, action)) in RULES_MAP.read().iter() {
                 debug!("{} => {} ({})", selector, action, metadata);
             }
+
+            dbus_api_tx.send(DbusApiEvent::RulesChanged {})?;
         }
     }
 
@@ -504,6 +529,9 @@ async fn process_dbus_event(event: &dbus_client::Message) -> Result<()> {
                 } else {
                     error!("Could not get the default rule");
                 }
+
+                // update global state
+                CURRENT_STATE.write().1 = Some(profile_name.clone());
             } else {
                 // we initiated the profile change
                 PROFILE_CHANGING.store(false, Ordering::SeqCst);
@@ -516,40 +544,51 @@ async fn process_dbus_event(event: &dbus_client::Message) -> Result<()> {
     Ok(())
 }
 
-async fn process_window_event(event: &sensors::X11SensorData) -> Result<()> {
+async fn process_window_event(event: Option<&sensors::X11SensorData>) -> Result<()> {
     trace!("Sensor data: {:#?}", event);
 
-    for (selector, (metadata, action)) in RULES_MAP.read().iter() {
-        match selector {
-            Selector::WindowFocused { mode, regex } => {
-                if metadata.enabled {
-                    let re = Regex::new(&regex)?;
+    if let Some(event) = event {
+        for (selector, (metadata, action)) in RULES_MAP.read().iter() {
+            match selector {
+                Selector::WindowFocused { mode, regex } => {
+                    if metadata.enabled {
+                        let re = Regex::new(&regex)?;
 
-                    match mode {
-                        WindowFocusedSelectorMode::WindowName => {
-                            if re.is_match(&event.window_name) {
-                                process_action(&action).await?;
-                                break;
+                        match mode {
+                            WindowFocusedSelectorMode::WindowName => {
+                                if re.is_match(&event.window_name) {
+                                    process_action(&action).await?;
+                                    break;
+                                }
                             }
-                        }
 
-                        WindowFocusedSelectorMode::WindowInstance => {
-                            if re.is_match(&event.window_instance) {
-                                process_action(&action).await?;
-                                break;
+                            WindowFocusedSelectorMode::WindowInstance => {
+                                if re.is_match(&event.window_instance) {
+                                    process_action(&action).await?;
+                                    break;
+                                }
                             }
-                        }
-                        WindowFocusedSelectorMode::WindowClass => {
-                            if re.is_match(&event.window_class) {
-                                process_action(&action).await?;
-                                break;
+                            WindowFocusedSelectorMode::WindowClass => {
+                                if re.is_match(&event.window_class) {
+                                    process_action(&action).await?;
+                                    break;
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            _ => { /* not a window related selector */ }
+                _ => { /* not a window related selector */ }
+            }
+        }
+    } else {
+        let selector = Selector::WindowFocused {
+            mode: WindowFocusedSelectorMode::WindowInstance,
+            regex: ".*".to_string(),
+        };
+
+        if let Some((_metadata, default_action)) = RULES_MAP.read().get(&selector) {
+            process_action(&default_action).await?;
         }
     }
 
@@ -671,7 +710,7 @@ pub fn spawn_dbus_thread(dbus_event_tx: Sender<dbus_client::Message>) -> Result<
                 },
             )?;
 
-            let tx = dbus_event_tx.clone();
+            let tx = dbus_event_tx;
             let _id3 = config_proxy.match_signal(
                 move |h: PropertiesPropertiesChanged, _: &Connection, _message: &dbus::Message| {
                     if let Some(brightness) = h.changed_properties.get("Brightness") {
@@ -699,6 +738,39 @@ pub fn spawn_dbus_thread(dbus_event_tx: Sender<dbus_client::Message>) -> Result<
         })?;
 
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub enum DbusApiEvent {
+    RulesChanged,
+}
+
+/// Spawns the D-Bus API thread and executes it's main loop
+fn spawn_dbus_api_thread(dbus_tx: Sender<dbus_interface::Message>) -> Result<Sender<DbusApiEvent>> {
+    let (dbus_api_tx, dbus_api_rx) = unbounded();
+
+    thread::Builder::new()
+        .name("dbus_interface".into())
+        .spawn(move || -> Result<()> {
+            let dbus = dbus_interface::initialize(dbus_tx)?;
+
+            loop {
+                // process events, destined for the dbus api
+                match dbus_api_rx.recv_timeout(Duration::from_millis(0)) {
+                    Ok(result) => match result {
+                        DbusApiEvent::RulesChanged => dbus.notify_rules_changed(),
+                    },
+
+                    // ignore timeout errors
+                    Err(_e) => (),
+                }
+
+                dbus.get_next_event_timeout(constants::DBUS_TIMEOUT_MILLIS as u32)
+                    .unwrap_or_else(|e| error!("Could not get the next D-Bus event: {}", e));
+            }
+        })?;
+
+    Ok(dbus_api_tx)
 }
 
 #[cfg(debug_assertions)]
@@ -740,6 +812,7 @@ pub async fn run_main_loop(
     dbusevents_rx: &Receiver<dbus_client::Message>,
     ctrl_c_rx: &Receiver<bool>,
     transport: &mut dyn Transport,
+    dbus_api_tx: &Sender<DbusApiEvent>,
 ) -> Result<()> {
     trace!("Entering main loop...");
 
@@ -773,9 +846,11 @@ pub async fn run_main_loop(
                 i if i == fsevents => {
                     let event = &oper.recv(&fsevents_rx);
                     if let Ok(event) = event {
-                        process_fs_event(&event).await.unwrap_or_else(|e| {
-                            error!("Could not process a filesystem event: {}", e)
-                        })
+                        process_fs_event(&event, &dbus_api_tx)
+                            .await
+                            .unwrap_or_else(|e| {
+                                error!("Could not process a filesystem event: {}", e)
+                            })
                     } else {
                         error!("{}", event.as_ref().unwrap_err());
                     }
@@ -815,13 +890,17 @@ pub async fn run_main_loop(
                 match sensor.poll() {
                     Ok(data) => {
                         if let Some(data) = data.as_any().downcast_ref::<sensors::X11SensorData>() {
-                            process_window_event(&data).await?;
+                            process_window_event(Some(&data)).await?;
                         } else {
                             warn!("Unknown sensor data: {:#?}", data);
                         }
                     }
 
-                    Err(e) => warn!("Could not poll a sensor: {}", e),
+                    Err(e) => {
+                        debug!("Could not poll a sensor: {}", e);
+
+                        process_window_event(None).await?;
+                    }
                 }
             }
         }
@@ -906,8 +985,10 @@ fn load_rules_map() -> Result<()> {
         regex: ".*".to_string(),
     };
 
-    let mut metadata = RuleMetadata::default();
-    metadata.internal = true;
+    let metadata = RuleMetadata {
+        internal: true,
+        ..Default::default()
+    };
 
     let action = Action::SwitchToProfile {
         profile_name: default_profile,
@@ -948,11 +1029,7 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
     let opts = Options::parse();
 
     // enable logging if we are running as a daemon
-    let daemon = match opts.command {
-        Subcommands::Daemon => true,
-
-        _ => false,
-    };
+    let daemon = matches!(opts.command, Subcommands::Daemon);
 
     if unsafe { libc::isatty(0) == 0 } || daemon {
         // initialize logging
@@ -976,9 +1053,8 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
 
     // register ctrl-c handler
     let (ctrl_c_tx, ctrl_c_rx) = unbounded();
-    let q = QUIT.clone();
     ctrlc::set_handler(move || {
-        q.store(true, Ordering::SeqCst);
+        QUIT.store(true, Ordering::SeqCst);
 
         ctrl_c_tx
             .send(true)
@@ -1030,11 +1106,15 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
             util::create_dir(&rules_dir)?;
             util::create_rules_file_if_not_exists(&rules_file)?;
 
-            let (fsevents_tx, fsevents_rx) = unbounded();
-            register_filesystem_watcher(fsevents_tx, rules_file)?;
-
             let (dbusevents_tx, dbusevents_rx) = unbounded();
             spawn_dbus_thread(dbusevents_tx)?;
+
+            // initialize the D-Bus API
+            let (dbus_tx, _dbus_rx) = unbounded();
+            let dbus_api_tx = spawn_dbus_api_thread(dbus_tx)?;
+
+            let (fsevents_tx, fsevents_rx) = unbounded();
+            register_filesystem_watcher(fsevents_tx, rules_file)?;
 
             // configure plugins
             let (sysevents_tx, sysevents_rx) = unbounded();
@@ -1068,9 +1148,17 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
             debug!("Entering the main loop now...");
 
             // enter the main loop
-            run_main_loop(&sysevents_rx, &fsevents_rx, &dbusevents_rx, &ctrl_c_rx, &mut transport)
-                .await
-                .unwrap_or_else(|e| error!("{}", e));
+
+            run_main_loop(
+                &sysevents_rx,
+                &fsevents_rx,
+                &dbusevents_rx,
+                &ctrl_c_rx,
+                &mut transport,
+                &dbus_api_tx,
+            )
+            .await
+            .unwrap_or_else(|e| error!("{}", e));
 
             debug!("Left the main loop");
         }
@@ -1244,6 +1332,38 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
                 save_rules_map()?;
             }
         },
+
+        Subcommands::Completions { command } => {
+            use clap::IntoApp;
+            use clap_generate::{generate, generators::*};
+
+            const BIN_NAME: &str = env!("CARGO_PKG_NAME");
+
+            let mut app = Options::into_app();
+            let mut fd = std::io::stdout();
+
+            match command {
+                CompletionsSubcommands::Bash => {
+                    generate::<Bash, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::Elvish => {
+                    generate::<Elvish, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::Fish => {
+                    generate::<Fish, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::PowerShell => {
+                    generate::<Fish, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::Zsh => {
+                    generate::<Fish, _>(&mut app, BIN_NAME, &mut fd);
+                }
+            }
+        }
     }
 
     info!("Saving rules...");

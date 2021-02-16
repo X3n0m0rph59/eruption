@@ -19,14 +19,14 @@ use clap::Clap;
 use colored::Colorize;
 use std::path::PathBuf;
 use std::{env, thread};
-use tokio::io;
+use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt};
 use tokio::io::{AsyncReadExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::prelude::*;
 use tokio::time::Duration;
 use walkdir::WalkDir;
 
 mod constants;
+mod hwdevices;
 mod utils;
 mod xwrap;
 
@@ -50,6 +50,9 @@ pub struct Options {
     #[clap(short, long, parse(from_occurrences))]
     verbose: u8,
 
+    /// The keyboard model, e.g. "ROCCAT Vulcan Pro TKL" or "1e7d:311a"
+    model: Option<String>,
+
     hostname: Option<String>,
     port: Option<u16>,
 
@@ -57,7 +60,7 @@ pub struct Options {
     command: Subcommands,
 }
 
-// Subcommands
+// Sub-commands
 #[derive(Debug, Clap)]
 pub enum Subcommands {
     /// Ping the server
@@ -66,17 +69,37 @@ pub enum Subcommands {
     /// Send Network FX raw protocol commands to the server
     Command { data: String },
 
-    /// Load an image file and display it on the keyboard
+    /// Load an image file and display it on the connected devices
     Image { filename: PathBuf },
 
-    /// Load image files from a directory and display each one on the keyboard
+    /// Load image files from a directory and display each one on the connected devices
     Animation {
         directory_name: PathBuf,
         frame_delay: Option<u64>,
     },
 
-    /// Make the keyboard reflect what is shown on the screen
+    /// Make the LEDs of connected devices reflect what is shown on the screen
     Ambient { frame_delay: Option<u64> },
+
+    /// Generate shell completions
+    Completions {
+        #[clap(subcommand)]
+        command: CompletionsSubcommands,
+    },
+}
+
+/// Subcommands of the "completions" command
+#[derive(Debug, Clap)]
+pub enum CompletionsSubcommands {
+    Bash,
+
+    Elvish,
+
+    Fish,
+
+    PowerShell,
+
+    Zsh,
 }
 
 /// Print license information
@@ -206,6 +229,8 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
         }
 
         Subcommands::Image { filename } => {
+            let device = hwdevices::get_keyboard_device(&opts.model)?;
+
             let address = format!(
                 "{}:{}",
                 opts.hostname
@@ -226,7 +251,7 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
                     let mut buffer = Vec::new();
                     let _len = reader.read_to_end(&mut buffer).await?;
 
-                    let commands = utils::process_image_buffer(&buffer)?;
+                    let commands = utils::process_image_buffer(&buffer, &device)?;
 
                     // print and send the specified command
                     if opts.verbose > 0 {
@@ -248,7 +273,7 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
                     }
                 }
             } else {
-                let commands = utils::process_image_file(&filename)?;
+                let commands = utils::process_image_file(&filename, &device)?;
 
                 // print and send the specified command
                 if opts.verbose > 0 {
@@ -271,6 +296,8 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
             directory_name,
             frame_delay,
         } => {
+            let device = hwdevices::get_keyboard_device(&opts.model)?;
+
             let address = format!(
                 "{}:{}",
                 opts.hostname
@@ -304,7 +331,7 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
                     println!("{}", &filename.path().to_string_lossy());
                 }
 
-                let commands = utils::process_image_file(&filename.path())?;
+                let commands = utils::process_image_file(&filename.path(), &device)?;
 
                 processed_images.push(commands);
             }
@@ -344,6 +371,8 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
         }
 
         Subcommands::Ambient { frame_delay } => {
+            let device = hwdevices::get_keyboard_device(&opts.model)?;
+
             let address = format!(
                 "{}:{}",
                 opts.hostname
@@ -370,7 +399,7 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
                 let image = display
                     .get_image(window, sel, xwrap::ALL_PLANES, x11::xlib::ZPixmap)
                     .unwrap();
-                let commands = utils::process_screenshot(&image)?;
+                let commands = utils::process_screenshot(&image, &device)?;
 
                 // print and send the specified commands
                 if opts.verbose > 0 {
@@ -392,6 +421,38 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
                 thread::sleep(Duration::from_millis(
                     frame_delay.unwrap_or(constants::DEFAULT_FRAME_DELAY_MILLIS),
                 ));
+            }
+        }
+
+        Subcommands::Completions { command } => {
+            use clap::IntoApp;
+            use clap_generate::{generate, generators::*};
+
+            const BIN_NAME: &str = env!("CARGO_PKG_NAME");
+
+            let mut app = Options::into_app();
+            let mut fd = std::io::stdout();
+
+            match command {
+                CompletionsSubcommands::Bash => {
+                    generate::<Bash, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::Elvish => {
+                    generate::<Elvish, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::Fish => {
+                    generate::<Fish, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::PowerShell => {
+                    generate::<Fish, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::Zsh => {
+                    generate::<Fish, _>(&mut app, BIN_NAME, &mut fd);
+                }
             }
         }
     };

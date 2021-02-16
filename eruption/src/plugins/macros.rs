@@ -15,22 +15,20 @@
     along with Eruption.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+use crossbeam::channel::{unbounded, Sender};
 use evdev_rs::enums::*;
 use evdev_rs::{Device, InputEvent, TimeVal, UInputDevice};
 use lazy_static::lazy_static;
 use log::*;
 use mlua::prelude::*;
 use parking_lot::Mutex;
-use std::any::Any;
 use std::cell::RefCell;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
-use std::thread;
+use std::{any::Any, thread};
 
 use crate::plugins::{self, Plugin};
-use crate::util;
 
 pub type Result<T> = std::result::Result<T, eyre::Error>;
 
@@ -50,6 +48,9 @@ pub enum Message {
 pub enum MacrosPluginError {
     #[error("Could not open the evdev device")]
     EvdevError {},
+
+    #[error("Could not map an evdev event code to a key or button")]
+    MappingError {},
 }
 
 lazy_static! {
@@ -97,6 +98,13 @@ impl MacrosPlugin {
         dev.enable(&EventCode::EV_MSC(EV_MSC::MSC_SCAN)).unwrap();
         dev.enable(&EventCode::EV_SYN(EV_SYN::SYN_REPORT)).unwrap();
 
+        // enable FN-F5 - FN-F8
+        dev.enable(&EventCode::EV_KEY(EV_KEY::KEY_FILE)).unwrap();
+        dev.enable(&EventCode::EV_KEY(EV_KEY::KEY_HOMEPAGE))
+            .unwrap();
+        dev.enable(&EventCode::EV_KEY(EV_KEY::KEY_MAIL)).unwrap();
+        dev.enable(&EventCode::EV_KEY(EV_KEY::KEY_CALC)).unwrap();
+
         // enable media keys
         dev.enable(&EventCode::EV_KEY(EV_KEY::KEY_PREVIOUSSONG))
             .unwrap();
@@ -110,7 +118,6 @@ impl MacrosPlugin {
         // to the virtual keyboard, so that the hardware device can be disabled.
 
         // Generated via `sudo evtest`
-        // Input device name: "ROCCAT ROCCAT Vulcan AIMO"
         // Supported events:
         dev.enable(&EventCode::EV_KEY(EV_KEY::KEY_ESC)).unwrap();
         dev.enable(&EventCode::EV_KEY(EV_KEY::KEY_1)).unwrap();
@@ -387,6 +394,35 @@ impl MacrosPlugin {
         }
     }
 
+    fn button_index_to_ev_key(index: u32) -> Result<EV_KEY> {
+        match index {
+            0 => Ok(EV_KEY::KEY_RESERVED),
+
+            1 => Ok(EV_KEY::BTN_LEFT),
+            2 => Ok(EV_KEY::BTN_MIDDLE),
+            3 => Ok(EV_KEY::BTN_RIGHT),
+
+            4 => Ok(EV_KEY::BTN_0),
+            5 => Ok(EV_KEY::BTN_1),
+            6 => Ok(EV_KEY::BTN_2),
+            7 => Ok(EV_KEY::BTN_3),
+            8 => Ok(EV_KEY::BTN_4),
+            9 => Ok(EV_KEY::BTN_5),
+            10 => Ok(EV_KEY::BTN_6),
+            11 => Ok(EV_KEY::BTN_7),
+            12 => Ok(EV_KEY::BTN_8),
+            13 => Ok(EV_KEY::BTN_9),
+
+            14 => Ok(EV_KEY::BTN_EXTRA),
+            15 => Ok(EV_KEY::BTN_SIDE),
+            16 => Ok(EV_KEY::BTN_FORWARD),
+            17 => Ok(EV_KEY::BTN_BACK),
+            18 => Ok(EV_KEY::BTN_TASK),
+
+            _ => Err(MacrosPluginError::MappingError {}.into()),
+        }
+    }
+
     /// Inject a press or release of key `key` into to output of the virtual keyboard
     fn inject_single_key(key: EV_KEY, value: i32, time: &TimeVal) -> Result<()> {
         //let mut do_initialize = false;
@@ -539,7 +575,7 @@ impl MacrosPlugin {
     }
 
     fn spawn_uinput_thread() -> Result<()> {
-        let (uinput_tx, uinput_rx) = channel();
+        let (uinput_tx, uinput_rx) = unbounded();
 
         thread::Builder::new()
             .name("uinput".into())
@@ -591,11 +627,8 @@ impl MacrosPlugin {
                             Self::inject_single_key(key, value, &time).unwrap();
                         }
 
-                        Message::InjectButtonEvent {
-                            button: ev_key,
-                            down,
-                        } => {
-                            let key = util::button_index_to_ev_key(ev_key).unwrap_or_else(|e| {
+                        Message::InjectButtonEvent { button, down } => {
+                            let key = Self::button_index_to_ev_key(button).unwrap_or_else(|e| {
                                 error!("Invalid button index: {}", e);
                                 panic!()
                             });

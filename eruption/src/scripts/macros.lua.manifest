@@ -1,6 +1,6 @@
 name = "Macros"
 description = "Default Macro Presets"
-version = "0.0.7"
+version = "0.0.8"
 author = "The Eruption development team"
 min_supported_version = "0.1.12"
 tags = ['Macros', 'Vendor']
@@ -39,7 +39,7 @@ default = 32
 type = 'int'
 name = 'overlay_step'
 description = 'Step TTL value for overlays each frame by [n]'
-default = 8
+default = 6
 
 [[config]]
 type = 'float'

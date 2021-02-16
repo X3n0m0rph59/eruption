@@ -14,6 +14,7 @@
 -- along with Eruption.  If not, see <http://www.gnu.org/licenses/>.
 
 require "declarations"
+require "utilities"
 require "debug"
 
 -- global state variables --
@@ -25,18 +26,15 @@ power_envelope = 128.0
 
 -- event handler functions --
 function on_startup(config)
-  	local num_keys = get_num_keys()
-	for i = 0, num_keys do
-		color_map[i] = rgba_to_color(0, 0, 0, 255)
+	for i = 0, canvas_size do
+		color_map[i] = 0x00000000
 	end
 end
 
 function on_tick(delta)
 	ticks = ticks + delta
 
-	local num_keys = get_num_keys()
-
-	for i = 0, num_keys do
+	for i = 0, canvas_size do
 		color_map[i] = rgba_to_color(0, 0, 0, lerp(0, 255, opacity))
 	end
 
@@ -51,14 +49,14 @@ function on_tick(delta)
 
 		local p = trunc(max(num_rows - (val / power_envelope), 0))
 
-		--debug("Col: " .. col .. " Value: " .. val .. " Envelope: " .. power_envelope ..
-		--" Bucket: " .. bucket .. " p: " .. p)
+		-- debug("Col: " .. col .. " Value: " .. val .. " Envelope: " .. power_envelope ..
+		-- 		 " Bucket: " .. bucket .. " p: " .. p)
 
 		for i = num_rows - 1, p, -1 do
-			local index = rows_topology[col + i * max_keys_per_row] + 1
+			local index = n(rows_topology[col + i * max_keys_per_row]) + 1
 			color_map[index] = linear_gradient(color_hot, color_cold, i / num_rows)
 
-			local peak_index = rows_topology[col + p * max_keys_per_row] + 1
+			local peak_index = n(rows_topology[col + p * max_keys_per_row]) + 1
 			if i ~= p then
 				color_map[peak_index] = rgba_to_color(0, 0, 0, lerp(0, 255, opacity))
 			end

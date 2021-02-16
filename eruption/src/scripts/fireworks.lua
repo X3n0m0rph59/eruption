@@ -14,13 +14,13 @@
 -- along with Eruption.  If not, see <http://www.gnu.org/licenses/>.
 
 require "declarations"
+require "utilities"
 require "debug"
 
 -- global state variables --
 color_map = {}
-max_effect_ttl = 50
-
-effect_ttl = 0
+max_effect_ttl = target_fps * 2
+effect_ttl = max_effect_ttl
 
 -- holds a scalar field to simulate fireworks
 fireworks_grid = {}
@@ -28,22 +28,25 @@ ticks = 0
 
 -- event handler functions --
 function on_startup(config)
-    local num_keys = get_num_keys()
+    for i = 0, canvas_size do
+        color_map[i] = 0x00000000
+    end
 
     for i = 0, num_keys do
-        color_map[i] = 0x00000000
         fireworks_grid[i] = 0.0
     end
 end
 
 function on_key_down(key_index)
-    for i = 0, max_neigh do
-      local neigh_key = neighbor_topology[(key_index * max_neigh) + i + table_offset] + 1
+    if key_index ~= 0 then
+        for i = 0, max_neigh do
+            local neigh_key = n(neighbor_topology[(key_index * max_neigh) + i + table_offset]) + 1
 
-      if neigh_key ~= 0xff then
-          fireworks_grid[neigh_key] = 1.0
-      end
-	end
+            if neigh_key ~= 0xff then
+                fireworks_grid[neigh_key] = 1.0
+            end
+        end
+    end
 
 	effect_ttl = max_effect_ttl
 end
@@ -55,8 +58,6 @@ function on_tick(delta)
 
     -- calculate fireworks effect
     if ticks % animation_speed == 0 then
-        local num_keys = get_num_keys()
-
         -- compute fireworks effect
       	for key_index = 1, num_keys - 1 do
 			local avg = (fireworks_grid[key_index - 1] + fireworks_grid[key_index + 1]) / 2

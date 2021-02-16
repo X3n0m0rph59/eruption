@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/org/eruption/eruption-gui">
+    <file compressed="true">ui/main.glade</file>
+    <file compressed="true">ui/about.glade</file>
+    <file compressed="true">ui/rule.glade</file>
+    <file>styles/app.css</file>
+    <file>img/eruption-gui.png</file>
+    <file>img/keyboard-generic.png</file>
+    <file>img/keyboard-generic-tkl.png</file>
+    <file>img/roccat-vulcan-1xx.png</file>
+    <file>img/roccat-vulcan-pro.png</file>
+    <file>img/roccat-vulcan-pro-tkl.png</file>
+    <file>img/roccat-vulcan-tkl.png</file>
+  </gresource>
+</gresources>

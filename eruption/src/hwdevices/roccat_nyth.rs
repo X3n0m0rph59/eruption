@@ -15,24 +15,49 @@
     along with Eruption.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+use bitvec::prelude::*;
+use evdev_rs::enums::EV_KEY;
+use hidapi::HidApi;
 use log::*;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 // use std::sync::atomic::Ordering;
-use std::thread;
 use std::time::Duration;
+use std::{any::Any, thread};
 use std::{mem::size_of, sync::Arc};
 
 use crate::constants;
 
 use super::{
-    DeviceCapabilities, DeviceInfoTrait, DeviceTrait, HwDeviceError, MouseDeviceTrait,
+    DeviceCapabilities, DeviceInfoTrait, DeviceTrait, HwDeviceError, MouseDevice, MouseDeviceTrait,
     MouseHidEvent, RGBA,
 };
 
 pub type Result<T> = super::Result<T>;
 
-// pub const NUM_KEYS: usize = 9;
-pub const KEYBOARD_SUB_DEVICE: usize = 2;
+pub const SUB_DEVICE: i32 = 1; // USB HID sub-device to bind to
+
+/// Binds the driver to a device
+pub fn bind_hiddev(
+    hidapi: &HidApi,
+    usb_vid: u16,
+    usb_pid: u16,
+    serial: &str,
+) -> super::Result<MouseDevice> {
+    let ctrl_dev = hidapi.device_list().find(|&device| {
+        device.vendor_id() == usb_vid
+            && device.product_id() == usb_pid
+            && device.serial_number().unwrap_or_else(|| "") == serial
+            && device.interface_number() == SUB_DEVICE
+    });
+
+    if ctrl_dev.is_none() {
+        Err(HwDeviceError::EnumerationError {}.into())
+    } else {
+        Ok(Arc::new(RwLock::new(Box::new(RoccatNyth::bind(
+            &ctrl_dev.unwrap(),
+        )))))
+    }
+}
 
 /// ROCCAT Nyth info struct (sent as HID report)
 #[derive(Debug, Copy, Clone)]
@@ -46,48 +71,6 @@ pub struct DeviceInfo {
     pub reserved3: u8,
 }
 
-/// Event code of a device HID message
-#[allow(non_camel_case_types)]
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum MouseHidEventCode {
-    #[allow(dead_code)]
-    Unknown(u8),
-
-    KEY_BTN1,
-}
-
-impl MouseHidEventCode {
-    // Instantiate a HidEventCode from raw HID report data
-    // pub fn from_report(report: u8, code: u8) -> Self {
-    //     match report {
-    //         0xfb => match code {
-    //             16 => Self::KEY_BTN1,
-
-    //             _ => Self::Unknown(code),
-    //         },
-
-    //         // 0x0a => match code {
-    //         //     57 => Self::KEY_CAPS_LOCK,
-    //         //     255 => Self::KEY_EASY_SHIFT,
-
-    //         //     _ => Self::Unknown(code),
-    //         // },
-    //         _ => Self::Unknown(code),
-    //     }
-    // }
-}
-
-/// Convert a HidEventCode to an integer code value
-impl Into<u8> for MouseHidEventCode {
-    fn into(self) -> u8 {
-        match self {
-            Self::KEY_BTN1 => 16,
-
-            MouseHidEventCode::Unknown(code) => code,
-        }
-    }
-}
-
 #[derive(Clone)]
 /// Device specific code for the ROCCAT Nyth mouse
 pub struct RoccatNyth {
@@ -98,6 +81,8 @@ pub struct RoccatNyth {
 
     pub is_opened: bool,
     pub ctrl_hiddev: Arc<Mutex<Option<hidapi::HidDevice>>>,
+
+    pub button_states: Arc<Mutex<BitVec>>,
 }
 
 impl RoccatNyth {
@@ -113,6 +98,8 @@ impl RoccatNyth {
 
             is_opened: false,
             ctrl_hiddev: Arc::new(Mutex::new(None)),
+
+            button_states: Arc::new(Mutex::new(bitvec![0; constants::MAX_MOUSE_BUTTONS])),
         }
     }
 
@@ -268,6 +255,18 @@ impl DeviceTrait for RoccatNyth {
             .to_string()
     }
 
+    fn get_usb_vid(&self) -> u16 {
+        self.ctrl_hiddev_info.as_ref().unwrap().vendor_id()
+    }
+
+    fn get_usb_pid(&self) -> u16 {
+        self.ctrl_hiddev_info.as_ref().unwrap().product_id()
+    }
+
+    fn get_support_script_file(&self) -> String {
+        "mice/roccat_nyth".to_string()
+    }
+
     fn open(&mut self, api: &hidapi::HidApi) -> Result<()> {
         trace!("Opening HID devices now...");
 
@@ -314,12 +313,14 @@ impl DeviceTrait for RoccatNyth {
             Err(HwDeviceError::DeviceNotOpened {}.into())
         } else {
             self.query_ctrl_report(0x0f)
-                .unwrap_or_else(|e| error!("{}", e));
+                .unwrap_or_else(|e| error!("Step 1: {}", e));
+            self.wait_for_ctrl_dev()
+                .unwrap_or_else(|e| error!("Wait 1: {}", e));
 
             // self.send_ctrl_report(0x15)
-            //     .unwrap_or_else(|e| error!("{}", e));
-
-            self.wait_for_ctrl_dev().unwrap_or_else(|e| error!("{}", e));
+            //     .unwrap_or_else(|e| error!("Step 2: {}", e));
+            // self.wait_for_ctrl_dev()
+            //     .unwrap_or_else(|e| error!("Wait 2: {}", e));
 
             self.is_initialized = true;
 
@@ -375,6 +376,14 @@ impl DeviceTrait for RoccatNyth {
             }
         }
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 impl MouseDeviceTrait for RoccatNyth {
@@ -399,49 +408,175 @@ impl MouseDeviceTrait for RoccatNyth {
             let mut buf = [0; 8];
 
             match ctrl_dev.read_timeout(&mut buf, millis) {
-                Ok(_size) => {
-                    hexdump::hexdump_iter(&buf).for_each(|s| trace!("  {}", s));
+                Ok(size) => {
+                    // hexdump::hexdump_iter(&buf).for_each(|s| trace!("  {}", s));
+                    hexdump::hexdump_iter(&buf).for_each(|s| debug!("  {}", s));
 
                     let event = match buf[0..5] {
-                        // DPI changed
+                        // Button reports (DPI)
                         [0x03, 0x00, 0xb0, level, _] => MouseHidEvent::DpiChange(level),
 
-                        // TODO: Remove this, as soon as we implement the extra keys
-                        _ if buf != [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] => {
-                            hexdump::hexdump_iter(&buf).for_each(|s| warn!("  {}", s));
-                            MouseHidEvent::Unknown
+                        // Button reports
+                        [button_mask, 0x00, button_mask2, 0x00, _] if size > 0 => {
+                            let mut result = vec![];
+
+                            let button_mask = button_mask.view_bits::<Lsb0>();
+                            let button_mask2 = button_mask2.view_bits::<Lsb0>();
+
+                            let mut button_states = self.button_states.lock();
+
+                            // notify button press events for the buttons 0..7
+                            for (index, down) in button_mask.iter().enumerate() {
+                                if *down && !*button_states.get(index).unwrap() {
+                                    result.push(MouseHidEvent::ButtonDown(index as u8));
+                                    button_states.set(index, *down);
+
+                                    break;
+                                }
+                            }
+
+                            // notify button press events for the buttons 8..15
+                            for (index, down) in button_mask2.iter().enumerate() {
+                                let index = index + 8; // offset by 8
+
+                                if *down && !*button_states.get(index).unwrap() {
+                                    result.push(MouseHidEvent::ButtonDown(index as u8));
+                                    button_states.set(index, *down);
+
+                                    break;
+                                }
+                            }
+
+                            // notify button release events for the buttons 0..7
+                            for (index, down) in button_mask.iter().enumerate() {
+                                if !*down && *button_states.get(index).unwrap() {
+                                    result.push(MouseHidEvent::ButtonUp(index as u8));
+                                    button_states.set(index, *down);
+
+                                    break;
+                                }
+                            }
+
+                            // notify button release events for the buttons 8..15
+                            for (index, down) in button_mask2.iter().enumerate() {
+                                let index = index + 8; // offset by 8
+
+                                if !*down && *button_states.get(index).unwrap() {
+                                    result.push(MouseHidEvent::ButtonUp(index as u8));
+                                    button_states.set(index, *down);
+
+                                    break;
+                                }
+                            }
+
+                            if result.len() > 1 {
+                                error!(
+                                "We missed a HID event, mouse button states will be inconsistent"
+                            );
+                            }
+
+                            if result.is_empty() {
+                                MouseHidEvent::Unknown
+                            } else {
+                                debug!("{:?}", result[0]);
+                                result[0]
+                            }
                         }
 
                         _ => MouseHidEvent::Unknown,
                     };
-
-                    // match event {
-                    //     HidEvent::KeyDown { code } => {
-                    //         // reset "to be dropped" flag
-                    //         macros::DROP_CURRENT_KEY.store(false, Ordering::SeqCst);
-
-                    //         // update our internal representation of the keyboard state
-                    //         let index = util::hid_code_to_key_index(code) as usize;
-                    //         keyboard::KEY_STATES.write()[index] = true;
-                    //     }
-
-                    //     HidEvent::KeyUp { code } => {
-                    //         // reset "to be dropped" flag
-                    //         macros::DROP_CURRENT_KEY.store(false, Ordering::SeqCst);
-
-                    //         // update our internal representation of the keyboard state
-                    //         let index = util::hid_code_to_key_index(code) as usize;
-                    //         keyboard::KEY_STATES.write()[index] = false;
-                    //     }
-
-                    //     _ => { /* ignore other events */ }
-                    // }
 
                     Ok(event)
                 }
 
                 Err(_) => Err(HwDeviceError::InvalidResult {}.into()),
             }
+        }
+    }
+
+    fn ev_key_to_button_index(&self, code: EV_KEY) -> Result<u8> {
+        match code {
+            EV_KEY::KEY_RESERVED => Ok(0),
+
+            EV_KEY::BTN_LEFT => Ok(1),
+            EV_KEY::BTN_MIDDLE => Ok(2),
+            EV_KEY::BTN_RIGHT => Ok(3),
+
+            EV_KEY::BTN_0 => Ok(4),
+            EV_KEY::BTN_1 => Ok(5),
+            EV_KEY::BTN_2 => Ok(6),
+            EV_KEY::BTN_3 => Ok(7),
+            EV_KEY::BTN_4 => Ok(8),
+            EV_KEY::BTN_5 => Ok(9),
+            EV_KEY::BTN_6 => Ok(10),
+            EV_KEY::BTN_7 => Ok(11),
+            EV_KEY::BTN_8 => Ok(12),
+            EV_KEY::BTN_9 => Ok(13),
+
+            EV_KEY::BTN_EXTRA => Ok(14),
+            EV_KEY::BTN_SIDE => Ok(15),
+            EV_KEY::BTN_FORWARD => Ok(16),
+            EV_KEY::BTN_BACK => Ok(17),
+            EV_KEY::BTN_TASK => Ok(18),
+
+            EV_KEY::KEY_0 => Ok(19),
+            EV_KEY::KEY_1 => Ok(20),
+            EV_KEY::KEY_2 => Ok(21),
+            EV_KEY::KEY_3 => Ok(22),
+            EV_KEY::KEY_4 => Ok(23),
+            EV_KEY::KEY_5 => Ok(24),
+            EV_KEY::KEY_6 => Ok(25),
+            EV_KEY::KEY_7 => Ok(26),
+            EV_KEY::KEY_8 => Ok(27),
+            EV_KEY::KEY_9 => Ok(28),
+
+            EV_KEY::KEY_MINUS => Ok(29),
+            EV_KEY::KEY_EQUAL => Ok(30),
+
+            _ => Err(HwDeviceError::MappingError {}.into()),
+        }
+    }
+
+    fn button_index_to_ev_key(&self, index: u32) -> Result<EV_KEY> {
+        match index {
+            0 => Ok(EV_KEY::KEY_RESERVED),
+
+            1 => Ok(EV_KEY::BTN_LEFT),
+            2 => Ok(EV_KEY::BTN_MIDDLE),
+            3 => Ok(EV_KEY::BTN_RIGHT),
+
+            4 => Ok(EV_KEY::BTN_0),
+            5 => Ok(EV_KEY::BTN_1),
+            6 => Ok(EV_KEY::BTN_2),
+            7 => Ok(EV_KEY::BTN_3),
+            8 => Ok(EV_KEY::BTN_4),
+            9 => Ok(EV_KEY::BTN_5),
+            10 => Ok(EV_KEY::BTN_6),
+            11 => Ok(EV_KEY::BTN_7),
+            12 => Ok(EV_KEY::BTN_8),
+            13 => Ok(EV_KEY::BTN_9),
+
+            14 => Ok(EV_KEY::BTN_EXTRA),
+            15 => Ok(EV_KEY::BTN_SIDE),
+            16 => Ok(EV_KEY::BTN_FORWARD),
+            17 => Ok(EV_KEY::BTN_BACK),
+            18 => Ok(EV_KEY::BTN_TASK),
+
+            19 => Ok(EV_KEY::KEY_0),
+            20 => Ok(EV_KEY::KEY_1),
+            21 => Ok(EV_KEY::KEY_2),
+            22 => Ok(EV_KEY::KEY_3),
+            23 => Ok(EV_KEY::KEY_4),
+            24 => Ok(EV_KEY::KEY_5),
+            25 => Ok(EV_KEY::KEY_6),
+            26 => Ok(EV_KEY::KEY_7),
+            27 => Ok(EV_KEY::KEY_8),
+            28 => Ok(EV_KEY::KEY_9),
+
+            29 => Ok(EV_KEY::KEY_MINUS),
+            30 => Ok(EV_KEY::KEY_EQUAL),
+
+            _ => Err(HwDeviceError::MappingError {}.into()),
         }
     }
 

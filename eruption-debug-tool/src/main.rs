@@ -23,6 +23,7 @@ use std::{env, thread};
 use std::{path::PathBuf, time::Duration};
 
 mod constants;
+mod hwdevices;
 mod util;
 
 use util::{DeviceState, HexSlice};
@@ -51,7 +52,7 @@ pub struct Options {
     command: Subcommands,
 }
 
-// Subcommands
+// Sub-commands
 #[derive(Debug, Clap)]
 pub enum Subcommands {
     /// List available devices, use this first to find out the index of the device to use
@@ -59,25 +60,25 @@ pub enum Subcommands {
 
     /// Generate a report for the specified device
     Report {
-        /// The index of the device, can be found with the list subcommand
+        /// The index of the device, can be found with the list sub-command
         device: usize,
     },
 
     /// Dump a trace of events originating from the specified device (May hang the device)
     Trace {
-        /// The index of the device, can be found with the list subcommand
+        /// The index of the device, can be found with the list sub-command
         device: usize,
     },
 
     /// Read out the device state and show differences to previous state (May hang the device)
     StateDiff {
-        /// The index of the device, can be found with the list subcommand
+        /// The index of the device, can be found with the list sub-command
         device: usize,
     },
 
     /// Read a single USB HID feature report from device
     Read {
-        /// The index of the device, can be found with the list subcommand
+        /// The index of the device, can be found with the list sub-command
         device: usize,
 
         /// ID of the USB HID report
@@ -90,12 +91,38 @@ pub enum Subcommands {
 
     /// Send a single USB HID feature report to device (dangerous)
     Write {
-        /// The index of the device, can be found with the list subcommand
+        /// The index of the device, can be found with the list sub-command
         device: usize,
 
         /// Hex bytes e.g.: [0x09, 0x00, 0x1f]
         data: String,
     },
+
+    /// Send a device specific init sequence and try to set colors
+    RunTests {
+        /// The index of the device, can be found with the list sub-command
+        device: usize,
+    },
+
+    /// Generate shell completions
+    Completions {
+        #[clap(subcommand)]
+        command: CompletionsSubcommands,
+    },
+}
+
+/// Subcommands of the "completions" command
+#[derive(Debug, Clap)]
+pub enum CompletionsSubcommands {
+    Bash,
+
+    Elvish,
+
+    Fish,
+
+    PowerShell,
+
+    Zsh,
 }
 
 /// Print license information
@@ -154,7 +181,7 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
         Subcommands::List => {
             println!();
             println!("Please find the device you want to debug below and use its respective");
-            println!("index number (column 1) as the device index for the other subcommands of this tool\n");
+            println!("index number (column 1) as the device index for the other sub-commands of this tool\n");
 
             // create the one and only hidapi instance
             match hidapi::HidApi::new() {
@@ -445,6 +472,79 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
 
                 Err(_) => {
                     error!("Could not open HIDAPI");
+                }
+            }
+        }
+
+        Subcommands::RunTests {
+            device: device_index,
+        } => {
+            // create the one and only hidapi instance
+            match hidapi::HidApi::new() {
+                Ok(hidapi) => {
+                    if let Some((index, device)) =
+                        hidapi.device_list().enumerate().nth(device_index)
+                    {
+                        println!(
+                            "Index: {}: ID: {:x}:{:x} {}/{} Subdev: {}",
+                            format!("{:02}", index).bold(),
+                            device.vendor_id(),
+                            device.product_id(),
+                            device.manufacturer_string().unwrap_or("<unknown>").bold(),
+                            device.product_string().unwrap_or("<unknown>").bold(),
+                            device.interface_number()
+                        );
+
+                        if let Ok(dev) = device.open_device(&hidapi) {
+                            let hwdev = hwdevices::bind_device(
+                                dev,
+                                &hidapi,
+                                device.vendor_id(),
+                                device.product_id(),
+                            )?;
+
+                            hwdev.send_init_sequence()?;
+                            hwdev.send_test_pattern()?;
+                        } else {
+                            error!("Could not open the device, is the device in use?");
+                        }
+                    }
+                }
+
+                Err(_) => {
+                    error!("Could not open HIDAPI");
+                }
+            }
+        }
+
+        Subcommands::Completions { command } => {
+            use clap::IntoApp;
+            use clap_generate::{generate, generators::*};
+
+            const BIN_NAME: &str = env!("CARGO_PKG_NAME");
+
+            let mut app = Options::into_app();
+            let mut fd = std::io::stdout();
+
+            match command {
+                CompletionsSubcommands::Bash => {
+                    generate::<Bash, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::Elvish => {
+                    generate::<Elvish, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::Fish => {
+                    generate::<Fish, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::PowerShell => {
+                    generate::<Fish, _>(&mut app, BIN_NAME, &mut fd);
+                }
+
+                CompletionsSubcommands::Zsh => {
+                    generate::<Fish, _>(&mut app, BIN_NAME, &mut fd);
                 }
             }
         }

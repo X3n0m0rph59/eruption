@@ -19,6 +19,7 @@
 -------------------------------------------------------------------------------
 
 require "declarations"
+require "utilities"
 require "debug"
 
 key_state = {
@@ -29,8 +30,8 @@ key_state = {
 	shockwave_origin = 32,
 }
 
-max_effect_ttl = 50
-effect_ttl = 0
+max_effect_ttl = target_fps * 2
+effect_ttl = max_effect_ttl
 
 -- max ttl of a shockwave cell
 shockwave_ttl = key_state.shockwave_origin - key_state.shockwave_sentinel
@@ -45,9 +46,9 @@ ticks = 0
 
 -- utility functions --
 local function set_neighbor_states(key_index, value)
-	if key_index ~= nil then
+	if key_index ~= nil and key_index ~= 0 then
 		for i = 0, max_neigh do
-			local neigh_key = neighbor_topology[(key_index * max_neigh) + i + table_offset]
+			local neigh_key = n(neighbor_topology[(key_index * max_neigh) + i + table_offset])
 
 			if neigh_key ~= nil and neigh_key ~= 0xff then
 				state_map[neigh_key + 1] = value
@@ -59,9 +60,7 @@ end
 
 -- event handler functions --
 function on_startup(config)
-	local num_keys = get_num_keys()
-
-    for i = 0, num_keys do
+    for i = 0, canvas_size do
 		state_map[i] = key_state.idle
 		color_map[i] = 0x00000000
 		color_map_afterglow[i] = 0x00000000
@@ -78,9 +77,7 @@ end
 function on_mouse_button_down(button_index)
 	if not mouse_events then return end
 
-	local num_keys = get_num_keys()
-
-	for i = 0, num_keys do
+	for i = 0, canvas_size do
 		color_map[i] = color_mouse_click_flash
 	end
 
@@ -90,9 +87,7 @@ end
 function on_mouse_button_up(button_index)
 	if not mouse_events then return end
 
-	local num_keys = get_num_keys()
-
-	for i = 0, num_keys do
+	for i = 0, canvas_size do
 		color_map[i] = color_mouse_click_flash
 	end
 
@@ -108,9 +103,7 @@ function on_mouse_wheel(direction)
 		c = color_mouse_wheel_flash
 	end
 
-	local num_keys = get_num_keys()
-
-	for i = 0, num_keys do
+	for i = 0, canvas_size do
 		color_map[i] = c
 	end
 
@@ -122,9 +115,7 @@ function on_mouse_hid_event(event_type, arg1)
 
 	if event_type == 1 then
 		-- DPI change event
-		local num_keys = get_num_keys()
-
-		for i = 0, num_keys do
+		for i = 0, canvas_size do
 			color_map[i] = color_mouse_wheel_flash
 		end
 
@@ -137,14 +128,12 @@ function on_tick(delta)
 
 	if effect_ttl <= 0 then return end
 
-	local num_keys = get_num_keys()
-
-	for i = 0, num_keys do
+	for i = 0, canvas_size do
 		visited_map[i] = false
 	end
 
 	-- propagate the shockwave
-	for i = 1, num_keys do
+	for i = 1, canvas_size do
 		-- decrease key ttl
 		if state_map[i] > key_state.shockwave_sentinel then
 			state_map[i] = state_map[i] - shockwave_ttl_decrease
@@ -155,7 +144,7 @@ function on_tick(delta)
 
 		-- propagate wave effect
 		if not visited_map[i] and state_map[i] >= key_state.shockwave_sentinel then
-			local neigh_key = neighbor_topology[(i * max_neigh) + 0 + table_offset] + 1
+			local neigh_key = n(neighbor_topology[(i * max_neigh) + 0 + table_offset]) + 1
 
 			if neigh_key ~= nil and neigh_key ~= 0xff then
 				state_map[neigh_key] = state_map[i] - shockwave_ttl_decrease
@@ -164,7 +153,7 @@ function on_tick(delta)
 				set_neighbor_states(i, state_map[neigh_key])
 			end
 		else
-			local neigh_key = neighbor_topology[(i * max_neigh) + 0 + table_offset] + 1
+			local neigh_key = n(neighbor_topology[(i * max_neigh) + 0 + table_offset]) + 1
 
 			if neigh_key ~= 0xff then
 				state_map[neigh_key] = key_state.idle

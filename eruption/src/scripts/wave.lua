@@ -14,6 +14,7 @@
 -- along with Eruption.  If not, see <http://www.gnu.org/licenses/>.
 
 require "declarations"
+require "utilities"
 require "debug"
 
 -- global state variables --
@@ -22,9 +23,7 @@ ticks = 0
 
 -- event handler functions --
 function on_startup(config)
-    local num_keys = get_num_keys()
-
-    for i = 0, num_keys do
+    for i = 0, canvas_size do
         color_map[i] = 0x00000000
     end
 end
@@ -38,7 +37,7 @@ function on_tick(delta)
                 local alpha = (sin(i / wave_length + (ticks * direction / speed_divisor)) + 1) * scale_factor
                 local r, g, b = color_to_rgb(color_wave)
 
-                local index = cols_topology[j + (i * max_keys_per_col)] + 1
+                local index = n(cols_topology[j + (i * max_keys_per_col)]) + 1
                 color_map[index] = rgba_to_color(r, g, b, clamp(0, 255, alpha * opacity))
             end
         end
@@ -48,7 +47,7 @@ function on_tick(delta)
                 local alpha = (sin(i / wave_length + (ticks * direction / speed_divisor)) + 1) * scale_factor
                 local r, g, b = color_to_rgb(color_wave)
 
-                local index = rows_topology[j + (i * max_keys_per_row)] + 1
+                local index = n(rows_topology[j + (i * max_keys_per_row)]) + 1
                 color_map[index] = rgba_to_color(r, g, b, clamp(0, 255, alpha * opacity))
             end
         end

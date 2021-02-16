@@ -19,20 +19,18 @@
 -------------------------------------------------------------------------------
 
 require "declarations"
+require "utilities"
 require "debug"
 
 -- global state variables --
 color_map = {}
 ticks = 0
-max_effect_ttl = 60
-
-effect_ttl = 0
+max_effect_ttl = target_fps * 3
+effect_ttl = max_effect_ttl
 
 -- event handler functions --
 function on_startup(config)
-	local num_keys = get_num_keys()
-
-	for i = 0, num_keys do
+	for i = 0, canvas_size do
 		color_map[i] = 0x00000000
 	end
 end
@@ -40,12 +38,14 @@ end
 function on_key_down(key_index)
 	color_map[key_index] = color_impact
 
-    for i = 0, max_neigh do
-        local neigh_key = neighbor_topology[(key_index * max_neigh) + i + table_offset] + 1
+	if key_index ~= 0 then
+		for i = 0, max_neigh do
+			local neigh_key = n(neighbor_topology[(key_index * max_neigh) + i + table_offset]) + 1
 
-        if neigh_key ~= 0xff then
-            color_map[neigh_key] = color_impact
-        end
+			if neigh_key ~= 0xff then
+				color_map[neigh_key] = color_impact
+			end
+		end
 	end
 
 	effect_ttl = max_effect_ttl
@@ -58,9 +58,7 @@ function on_tick(delta)
 
 	-- compute impact effect
 	if ticks % impact_step == 0 then
-		local num_keys = get_num_keys()
-
-		for i = 0, num_keys do
+		for i = 0, canvas_size do
 			color = color_map[i]
 			if color ~= nil then
 				r, g, b, alpha = color_to_rgba(color)

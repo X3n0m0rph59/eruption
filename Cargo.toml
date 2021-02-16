@@ -1,8 +1,8 @@
 [workspace]
-members = ["eruption", "eruptionctl", "eruption-netfx", "eruption-debug-tool", "eruption-process-monitor"]
+members = ["eruption", "eruptionctl", "eruption-netfx", "eruption-debug-tool", "eruption-util", "eruption-process-monitor", "eruption-gui"]
 
 [profile.dev]
-opt-level = 0
+opt-level = 1
 debug = true
 rpath = false
 lto = false
