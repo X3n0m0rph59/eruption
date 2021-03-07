@@ -2189,8 +2189,13 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
     }
 
     info!(
-        "Starting Eruption - Linux user-mode input and LED driver for keyboards, mice and other devices: Version {}",
-        env!("CARGO_PKG_VERSION")
+        "Starting Eruption - Linux user-mode input and LED driver for keyboards, mice and other devices: Version {} ({} build)",
+        env!("CARGO_PKG_VERSION"),
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
     );
 
     // register ctrl-c handler
@@ -2350,6 +2355,13 @@ pub async fn main() -> std::result::Result<(), eyre::Error> {
                 }
 
                 info!("Device enumeration completed");
+
+                if crate::KEYBOARD_DEVICES.lock().is_empty()
+                    && crate::MOUSE_DEVICES.lock().is_empty()
+                {
+                    error!("No supported devices found, exiting now");
+                    process::exit(5);
+                }
 
                 info!("Performing late initializations...");
 

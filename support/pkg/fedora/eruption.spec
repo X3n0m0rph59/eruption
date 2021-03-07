@@ -30,6 +30,7 @@ Requires: dbus
 Requires: hidapi
 Requires: libevdev
 Requires: luajit
+Requires: gtksourceview3
 
 Recommends: lua-socket-compat
 
@@ -113,6 +114,9 @@ cp -a %{_builddir}/%{name}-%{version}/support/systemd/eruption-process-monitor.p
 cp -a %{_builddir}/%{name}-%{version}/support/systemd/eruption-process-monitor.service %{buildroot}/%{_userunitdir}/
 cp -a %{_builddir}/%{name}-%{version}/support/profiles/animal-blobby.profile %{buildroot}%{_sharedstatedir}/%{ShortName}/profiles/
 cp -a %{_builddir}/%{name}-%{version}/support/profiles/animal-blobby-swirl.profile %{buildroot}%{_sharedstatedir}/%{ShortName}/profiles/
+cp -a %{_builddir}/%{name}-%{version}/support/profiles/animal-breathing-1.profile %{buildroot}%{_sharedstatedir}/%{ShortName}/profiles/
+cp -a %{_builddir}/%{name}-%{version}/support/profiles/animal-breathing-2.profile %{buildroot}%{_sharedstatedir}/%{ShortName}/profiles/
+cp -a %{_builddir}/%{name}-%{version}/support/profiles/animal-breathing-3.profile %{buildroot}%{_sharedstatedir}/%{ShortName}/profiles/
 cp -a %{_builddir}/%{name}-%{version}/support/profiles/default.profile %{buildroot}%{_sharedstatedir}/%{ShortName}/profiles/
 cp -a %{_builddir}/%{name}-%{version}/support/profiles/checkerboard.profile %{buildroot}%{_sharedstatedir}/%{ShortName}/profiles/
 cp -a %{_builddir}/%{name}-%{version}/support/profiles/fx1.profile %{buildroot}%{_sharedstatedir}/%{ShortName}/profiles/
@@ -230,6 +234,9 @@ install -Dp -m 0755 %{_builddir}/%{name}-%{version}/target/release/eruption-gui 
 %{_datarootdir}/zsh/site-functions/_eruptionctl
 %{_sharedstatedir}/%{ShortName}/profiles/animal-blobby.profile
 %{_sharedstatedir}/%{ShortName}/profiles/animal-blobby-swirl.profile
+%{_sharedstatedir}/%{ShortName}/profiles/animal-breathing-1.profile
+%{_sharedstatedir}/%{ShortName}/profiles/animal-breathing-2.profile
+%{_sharedstatedir}/%{ShortName}/profiles/animal-breathing-3.profile
 %{_sharedstatedir}/%{ShortName}/profiles/default.profile
 %{_sharedstatedir}/%{ShortName}/profiles/checkerboard.profile
 %{_sharedstatedir}/%{ShortName}/profiles/fx1.profile
@@ -284,8 +291,10 @@ install -Dp -m 0755 %{_builddir}/%{name}-%{version}/target/release/eruption-gui 
 %{_datarootdir}/%{ShortName}/scripts/lib/hwdevices/keyboards/roccat_vulcan_1xx.lua
 %{_datarootdir}/%{ShortName}/scripts/lib/hwdevices/keyboards/roccat_vulcan_tkl.lua
 %{_datarootdir}/%{ShortName}/scripts/lib/hwdevices/keyboards/roccat_vulcan_pro_tkl.lua
+%{_datarootdir}/%{ShortName}/scripts/lib/hwdevices/keyboards/roccat_vulcan_pro.lua
 %{_datarootdir}/%{ShortName}/scripts/lib/hwdevices/mice/generic_mouse.lua
 %{_datarootdir}/%{ShortName}/scripts/lib/hwdevices/mice/roccat_kone_aimo.lua
+%{_datarootdir}/%{ShortName}/scripts/lib/hwdevices/mice/roccat_kone_aimo_remastered.lua
 %{_datarootdir}/%{ShortName}/scripts/lib/hwdevices/mice/roccat_kone_pure_ultra.lua
 %{_datarootdir}/%{ShortName}/scripts/lib/hwdevices/mice/roccat_kova_aimo.lua
 %{_datarootdir}/%{ShortName}/scripts/lib/hwdevices/mice/roccat_nyth.lua

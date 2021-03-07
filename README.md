@@ -41,6 +41,7 @@ A Linux user-mode input and LED driver for keyboards, mice and other devices
 
 - ROCCAT Kone Pure Ultra
 - ROCCAT Kone Aimo (experimental)
+- ROCCAT Kone Aimo Remastered (experimental)
 - ROCCAT Kova AIMO (experimental)
 
 Please see [DEVICES.md](DEVICES.md) for further information
@@ -120,7 +121,11 @@ the daemon with the command:
  $ git clone https://github.com/X3n0m0rph59/eruption.git
  $ cd eruption
  $ cargo build --all --release
+
+ $ sudo target/release/eruption -c support/config/eruption.conf
 ```
+
+Please refer to [INSTALL.md](INSTALL.md) for further information.
 
 ## After Setup
 
